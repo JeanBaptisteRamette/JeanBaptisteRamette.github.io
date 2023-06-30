@@ -28,7 +28,7 @@ It calls `sub_140001000` with two integers as arguments three times and check th
 
 ![Post check](/assets/blog-post-apihashing/main2.png)
 
-If they all do not return 0, it will call the values returned by the function (`rbx`, `rdi`, `rsi`), then exits. The disassembly can be translated to the pseudocode:
+If none of them return 0, it will call the values returned by the function (`rbx`, `rdi`, `rsi`), then exits. The disassembly can be translated to the pseudocode:
 
 ```c
 main()
@@ -50,7 +50,7 @@ main()
 ```
 
 We guess from the behavior of the program that and arguments that `v1` is the function opening the file, `v2` writes to it and `v3` closes it.
-This means that the malware is doing some kind of dynamic API resolving (retrieving the functions at runtime).
+This means that the malware is doing some kind of dynamic API resolving (retrieving the functions at runtime), the value `0x15490331` probably being the hash of a module name, and the second arguments the hash of a function name.
 
 
 ## Theory
@@ -80,7 +80,7 @@ typedef struct _PEB {
 
 There are a lot of interesting fields in this structure we could talk about, but what we are interested in right now is the `LoaderData` field, which holds a linked list of modules loaded for the process.
 
-You can access the PEB through an assembly stub or an intrinsic function only, on 64-bit Windows, a pointer to the PEB is located at offset `0x60` in the `GS` segment:
+You can access the PEB through an assembly stub or an intrinsic function only, on Windows for the x64 architecture, a pointer to the PEB is located at offset `0x60` in the `GS` segment:
 ```c++
 reinterpret_cast<PNT_PEB64>(__readgsqword(0x60));
 ```
@@ -94,7 +94,8 @@ mov rax, qword ptr gs:[60]
 
 Hashing is the process of transforming input data into a fixed-size value, called a "hash" or a "digest". The two key characteristics that are really important for our use-case is that it is:
 
-1. Deterministic: Hashing the same input will always give the same digest, which is important for comparisons. Mathematically: $$ h(x_1) = h(x_2) \iff x_1 = x_2 $$ (In practice, collisions happen)
+1. Deterministic: Hashing the same input will always give the same digest, which is important for comparisons. Mathematically: $$ h(x_1) = h(x_2) \iff x_1 = x_2 $$ 
+   Although in practice, depending on the algorithm, collisions may happen (a collision is when $$ (h(x_1) = h(x_2)) \land (x_1 != x_2) $$)
 2. Irreversibility: Hashing functions are one-way, you can not find the input from the output without bruteforcing with all possible inputs. This is important for the malware developer, it's not some xor string cyphering.
 
 
