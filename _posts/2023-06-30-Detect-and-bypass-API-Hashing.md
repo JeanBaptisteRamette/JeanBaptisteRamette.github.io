@@ -95,7 +95,7 @@ mov rax, qword ptr gs:[60]
 Hashing is the process of transforming input data into a fixed-size value, called a "hash" or a "digest". The two key characteristics that are really important for our use-case is that it is:
 
 1. Deterministic: Hashing the same input will always give the same digest, which is important for comparisons. Mathematically: $$ h(x_1) = h(x_2) \iff x_1 = x_2 $$ 
-   Although in practice, depending on the algorithm, collisions may happen (a collision is when $$ (h(x_1) = h(x_2)) \land (x_1 != x_2) $$)
+   Although in practice, depending on the algorithm, collisions may happen more or less meaning: $$ h(x_1) = h(x_2) \land x_1 \neq x_2 $$
 2. Irreversibility: Hashing functions are one-way, you can not find the input from the output without bruteforcing with all possible inputs. This is important for the malware developer, it's not some xor string cyphering.
 
 
