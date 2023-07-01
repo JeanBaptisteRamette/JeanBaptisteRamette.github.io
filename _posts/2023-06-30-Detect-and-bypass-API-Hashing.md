@@ -402,7 +402,7 @@ Conveniently, x64dbg automatically compares addresses and find which function wa
 
 ### Bruteforcing the hash 
 
-As explained before, a hash function is one way, so we would need to bruteforce the hash function with all possible WinAPI exports. I made a C++ tool that you can find [here](https://github.com/JeanBaptisteRamette/HashAPI), allowing us to automate this, you feed it some DLLs and it will dump their exported function names. It is pretty fast as I multithreaded it, so you can pass lots of DLLs to increase chances to find a hash. You can also conveniently pass it a python function so it automatically computes the hashes and builds a hashtable.
+As explained before, a hash function is one way, so we would need to bruteforce the hash function with all possible WinAPI exports. I made a C++ tool that you can find [here](https://github.com/JeanBaptisteRamette/HashAPI), allowing us to automate this, you feed it some DLLs and it will dump their exported function names. It is pretty fast as I multithreaded it, so you can pass lots of DLLs to increase chances to find a matching hash. You can also conveniently pass it a python function so it automatically computes the hashes and builds a hashtable.
 
 {:style="text-align:center;"}
 ![Usage](/assets/blog-post-apihashing/tool_use.png)
@@ -413,4 +413,8 @@ As explained before, a hash function is one way, so we would need to bruteforce 
 {:style="text-align:center;"}
 ![Result](/assets/blog-post-apihashing/tool_result.png)
 
-It now created a hashtable for us, we just need to search for the hash we have in IDA, in our case they were `18E6042C`, `191C0443`, and `11C8038C`. Looking at our hashtable they map to `CreateFileW`, `CloseHandle`, and `WriteFile`, as we saw from the original code. Perfect !
+It now created a hashtable for us, we just need to search for the digests we have in IDA, in our case they were `18E6042C`, `191C0443`, and `11C8038C`. Looking at our hashtable they map to `CreateFileW`, `CloseHandle`, and `WriteFile`, as we saw from the original code. Perfect, we can now label everything in our IDB and start reversing !
+
+
+## Conclusion
+Here is what you need to know about API hashing, if you want to experiment find the source code for the implementation of API hashing [here](https://github.com/JeanBaptisteRamette/HashAPI/blob/main/implementation/api_hash.cpp).
