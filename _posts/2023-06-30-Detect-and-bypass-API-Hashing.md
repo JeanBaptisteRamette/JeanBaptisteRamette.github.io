@@ -309,9 +309,10 @@ LPVOID ResolveProcedure(LPBYTE ImageBase, uint32_t ProcedureHash)
 
 Now that we know how API hashing works and can be implemented, we are easily able to detect it from inside a disassembler/decompiler.
 
-1. Few to no imports (except the default ones as we saw earlier). This quite probably means that functions are being resolved at runtime, if you can not find xrefs to `LoadLibrary`/`GetProcAddress`, this probably means that the malware is going to scan for those in the PEB's module list. If there are references to those two APIs, probably the symbols names are just being decrypted at runtime.
+* Few to no imports (except the default ones as we saw earlier). This quite probably means that functions are being resolved at runtime, if you can not find xrefs to `LoadLibrary`/`GetProcAddress`, this probably means that the malware is going to scan for those in the PEB's module list. If there are references to those two APIs, probably the symbols names are just being decrypted at runtime.
 
-2. Lots of function pointers as it is done for usual dynamic API resolving. You should also see a lot of calls looking like this:
+* Lots of function pointers as it is done for usual dynamic API resolving. You should also see a lot of calls looking like this:
+
 ```c++
 ptr1 = sub_XXXX(0xDEADBEEF, 0x1337);
 ptr2 = sub_XXXX(0xDEADBEEF, 0xCAFE);
@@ -321,9 +322,13 @@ ptr1(1, 2, 3);
 ptr2();
 ptr1(4, 5);
 ```
+
 With two integers passed as argument, `0xDEADBEEF` being the hash of a module's name, and `0x1337` being the hash of a procedure's name.
-3. `mov rax, qword ptr gs:[60]` / `NtCurrentPeb()`. The malware is retrieving the Process Environment Block. Note that IDA automatically replaces the assembly by `NtCurrentPeb()` in the decompilation view, this is not a WinAPI function.
-4. PEB walking. The malware retrieves the module by traversing one of the three linked lists in the PEB_LDR_DATA structure:
+
+* `mov rax, qword ptr gs:[60]` / `NtCurrentPeb()`. The malware is retrieving the Process Environment Block. Note that IDA automatically replaces the assembly by `NtCurrentPeb()` in the decompilation view, this is not a WinAPI function.
+
+* PEB walking. The malware retrieves the module by traversing one of the three linked lists in the PEB_LDR_DATA structure:
+
 ```c++
 struct NT_PEB_LDR_DATA
 {
@@ -338,18 +343,21 @@ struct NT_PEB_LDR_DATA
     LPVOID EntryInProgress;
 };
 ```
+
 ![Peb Walking](/assets/blog-post-apihashing/PebWalking1.png)
 
 ![Peb Walking](/assets/blog-post-apihashing/PebWalking2.png)
 
 IDA has no problem typing the local variables correctly, making it easy to detect.
-5. PE Parsing, once the malware retrieved the base address of the module it needs, it needs to parse it to obtain the EAT.
+
+* PE Parsing, once the malware retrieved the base address of the module it needs, it needs to parse it to obtain the EAT.
 
 ![PE Parsing](/assets/blog-post-apihashing/PEParsing.png)
 
 If you need, you can use IDA's immediate value search to search for the DOS Header Magic (`0x5A4D`) or the PE signature (`0x4550`) which the malware might check for.
 If you want to label and type the PE structures, make sure to use the right version of the structures for 32-bit or 64-bit PE format !
-6. Presence of a hash function called during PEB walking and PE parsing. In our case:
+
+* Presence of a hash function called during PEB walking and PE parsing. In our case:
 
 ![Hash function](/assets/blog-post-apihashing/hash_function1.png)
 
