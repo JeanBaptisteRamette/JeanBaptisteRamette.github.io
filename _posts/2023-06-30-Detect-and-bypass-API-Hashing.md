@@ -85,7 +85,7 @@ You can access the PEB through an assembly stub or an intrinsic function only, o
 reinterpret_cast<PNT_PEB64>(__readgsqword(0x60));
 ```
 
-```asm
+```nasm
 mov rax, qword ptr gs:[60]
 ```
 
@@ -209,7 +209,7 @@ Function ResolveAPI(uint32_t ModuleHash, uint32_t ProcedureHash)
 }
 ```
 
-It will call `ResolveInMemoryModule` which will search for a certain module in the PEB, known as PEB walking:
+It will call `ResolveInMemoryModule` which will search for a certain module in the PEB, known as PEB walking, think of it as the equivalent of `LoadLibrary`, but the library is already loaded:
 
 ```c++
 PNT_LDR_DATA_TABLE_ENTRY ResolveInMemoryModule(uint32_t ModuleHash)
@@ -217,16 +217,21 @@ PNT_LDR_DATA_TABLE_ENTRY ResolveInMemoryModule(uint32_t ModuleHash)
     const auto Peb = NtCurrentPeb();
     const auto LoaderData = Peb->Ldr;
 
-    // circular doubled linked list of all modules loaded for the process
+    // circular doubled linked list of all modules loaded for the process.
+    // each item in the list is a pointer to an LDR_DATA_TABLE_ENTRY structure
     const LIST_ENTRY* Head = &LoaderData->InMemoryOrderModuleList;
     const LIST_ENTRY* ModuleNode = nullptr;
 
     // walk through the list
     for (ModuleNode = Head->Flink; ModuleNode != Head ; ModuleNode = ModuleNode->Flink)
     {
+        // CONTAINING_RECORD is a weird macro hack from microsoft
+        // to retrieve a pointer to a structure containing a specific field.
         const auto LoadedModule = CONTAINING_RECORD(ModuleNode, NT_LDR_DATA_TABLE_ENTRY, InMemoryOrderModuleList);
         const auto ModuleName = LoadedModule->BaseDllName.Buffer;
 
+        // if name digest correspond this means
+        // the entry is the module we want to retrieve
         if (SymHash(ModuleName) == ModuleHash)
             return LoadedModule;
     }
@@ -235,4 +240,120 @@ PNT_LDR_DATA_TABLE_ENTRY ResolveInMemoryModule(uint32_t ModuleHash)
 }
 ```
 
-The important line here is the `SymHash` call, Sym
+We compare each hash with the hash we are looking for.
+
+After we have found a handle to the module we want, we can access the field `DllBase` of the returned `LDR_DATA_TABLE_ENTRY` which points to the loaded DLL Image
+
+![DLL Base field in debugger](/assets/blog-post-apihashing/dumpingmodulebase.png)
+
+Next we call `ResolveProcedure(LPBYTE ModuleBase, uint32_t ProcedureHash)`, which is a custom reimplementation of `GetProcAddress(HMODULE Mod, LPCSTR lpProcName)` that takes the hash of lpProcName calculated at compile time instead:
+
+```c++
+LPVOID ResolveProcedure(LPBYTE ImageBase, uint32_t ProcedureHash)
+{
+    const auto DosHdr = (PIMAGE_DOS_HEADER)ImageBase;
+
+    if (DosHdr->e_magic != IMAGE_DOS_SIGNATURE)
+        return nullptr;
+
+    const auto NtHdrs = (PIMAGE_NT_HEADERS64)(ImageBase + DosHdr->e_lfanew);
+
+    auto VerifyImage = [](auto NtHeaders) -> bool
+    {
+        if (NtHeaders->Signature != IMAGE_NT_SIGNATURE)
+            return false;
+
+        if ((NtHeaders->FileHeader.Characteristics & IMAGE_FILE_DLL) == 0)
+            return false;
+
+        const auto DirSize = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].Size;
+        const auto DirVirt = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+
+        if (DirSize == 0 || DirVirt == 0)
+            return false;
+
+        return true;
+    };
+
+    // Verify that there is a export directory.
+    if (!VerifyImage(NtHdrs))
+        return nullptr;
+
+    const auto& OptHdr = NtHdrs->OptionalHeader;
+
+    const auto ExportDirVirt = OptHdr.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;  // actually a RVA
+    const auto ExportDir = (PIMAGE_EXPORT_DIRECTORY)(ImageBase + ExportDirVirt);
+
+    // Get the EAT
+    const auto Ordinals  = (LPWORD) (ImageBase + ExportDir->AddressOfNameOrdinals);
+    const auto Functions = (LPDWORD)(ImageBase + ExportDir->AddressOfFunctions);
+    const auto Symbols   = (LPDWORD)(ImageBase + ExportDir->AddressOfNames);
+
+    // For each entry in the EAT
+    for (size_t i = 0; i < ExportDir->NumberOfNames; ++i)
+    {
+        // Retrieve the exported function name
+        const char* SymName = (char*)(ImageBase + Symbols[i]);
+
+        // Return function address if the hashes match
+        if (SymHash(SymName) == ProcedureHash)
+            return (LPVOID)(ImageBase + Functions[Ordinals[i]]);
+    }
+
+    return nullptr;
+}
+```
+
+
+## Detection of API hashing
+
+Now that we know how API hashing works and can be implemented, we are easily able to detect it from inside a disassembler/decompiler.
+
+1. Few to no imports (except the default ones as we saw earlier). This quite probably means that functions are being resolved at runtime, if you can not find xrefs to `LoadLibrary`/`GetProcAddress`, this probably means that the malware is going to scan for those in the PEB's module list. If there are references to those two APIs, probably the symbols names are just being decrypted at runtime.
+
+2. Lots of function pointers as it is done for usual dynamic API resolving. You should also see a lot of calls looking like this:
+```c++
+ptr1 = sub_XXXX(0xDEADBEEF, 0x1337);
+ptr2 = sub_XXXX(0xDEADBEEF, 0xCAFE);
+ptr3 = sub_XXXX(0xDEADBEEF, 0xBABE);
+```
+
+With two integers passed as argument, `0xDEADBEEF` being the hash of a module's name, and `0x1337` being the hash of a procedure's name.
+
+3. `mov rax, qword ptr gs:[60]` / `NtCurrentPeb()`. The malware is retrieving the Process Environment Block. Note that IDA automatically replaces the assembly by `NtCurrentPeb()` in the decompilation view, this is not a WinAPI function.
+
+4. PEB walking. The malware retrieves the module by traversing one of the three linked lists in the PEB_LDR_DATA structure:
+```c++
+struct NT_PEB_LDR_DATA
+{
+	DWORD Length;
+	DWORD Initialized;
+	LPVOID SsHandle;
+
+	LIST_ENTRY InLoadOrderModuleList;
+	LIST_ENTRY InMemoryOrderModuleList;
+	LIST_ENTRY InInitializationOrderModuleList;
+
+	LPVOID EntryInProgress;
+};
+```
+
+![Peb Walking](/assets/blog-post-apihashing/PebWalking1.png)
+
+![Peb Walking](/assets/blog-post-apihashing/PebWalking2.png)
+
+IDA has no problem typing the local variables correctly, making it easy to detect.
+
+5. Presence of a hash function called during PEB walking and PE parsing. In our case:
+
+![Hash function](/assets/blog-post-apihashing/hash_function.png)
+
+6. PE Parsing, once the malware retrieved the base address of the module it needs, it needs to parse it to obtain the EAT.
+
+![PE Parsing](/assets/blog-post-apihashing/PEParsing.png)
+
+If you need, you can use IDA's immediate value search to search for the DOS Header Magic (`0x5A4D`) or the PE signature (`0x4550`) which the malware might check for.
+If you want to label and type the PE structures, make sure to use the right version of the structures for 32-bit or 64-bit PE format !
+
+
+## Bypassing it
