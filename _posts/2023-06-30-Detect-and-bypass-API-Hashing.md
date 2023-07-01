@@ -16,17 +16,20 @@ This is where API hashing appears. Let's take a look at a simple binary I made t
 ## The Analyst's View
 Let's look at the import table of the sample and see what we can learn about the executable:
 
+{:style="text-align:center;"}
 ![PE Imports](/assets/blog-post-apihashing/imports.png)
 
 mmmh...We do not see anything interesting in this table...The imports listed here are just used to generate a stack cookie and initializing the Microsoft C Runtime Library (search "scrt_commain_main_seh" if you want to learn more about that).
 
 If we run the executable (it is not malicious :D), it drops a file named `"demo.txt"`, yet we did not see any `CreateFile`/`WriteFile` or any lower level equivalent API call. How is this possible..? Keep digging in the main function which is pretty straight forward:
 
+{:style="text-align:center;"}
 ![Main Function Prologue](/assets/blog-post-apihashing/main1.png)
 
 It calls `sub_140001000` with two integers as arguments three times and check that the return values (`rbx`, `rdi`, `rsi`) are not null else it exits.
 
-![Post check](/assets/blog-post-apihashing/main2.png)
+{:style="text-align:center;"}
+![Post pointer check](/assets/blog-post-apihashing/main2.png)
 
 If none of them return 0, it will call the values returned by the function (`rbx`, `rdi`, `rsi`), then exits. The disassembly can be translated to the pseudocode:
 
@@ -244,6 +247,7 @@ We compare each hash with the hash we are looking for.
 
 After we have found a handle to the module we want, we can access the field `DllBase` of the returned `LDR_DATA_TABLE_ENTRY` which points to the loaded DLL Image
 
+{:style="text-align:center;"}
 ![DLL Base field in debugger](/assets/blog-post-apihashing/dumpingmodulebase.png)
 
 Next we call `ResolveProcedure(LPBYTE ModuleBase, uint32_t ProcedureHash)`, which is a custom reimplementation of `GetProcAddress(HMODULE Mod, LPCSTR lpProcName)` that takes the hash of lpProcName calculated at compile time instead:
@@ -344,14 +348,17 @@ struct NT_PEB_LDR_DATA
 };
 ```
 
+{:style="text-align:center;"}
 ![Peb Walking](/assets/blog-post-apihashing/PebWalking1.png)
 
+{:style="text-align:center;"}
 ![Peb Walking](/assets/blog-post-apihashing/PebWalking2.png)
 
 IDA has no problem typing the local variables correctly, making it easy to detect.
 
 * PE Parsing, once the malware retrieved the base address of the module it wants, it needs to parse the module to obtain its EAT.
 
+{:style="text-align:center;"}
 ![PE Parsing](/assets/blog-post-apihashing/PEParsing.png)
 
 If you need, you can use IDA's immediate value search to search for the DOS Header Magic (`0x5A4D`) or the PE signature (`0x4550`) which the malware might check for.
@@ -359,34 +366,51 @@ If you want to label and type the PE structures, make sure to use the right vers
 
 * Presence of a hash function called during PEB walking and PE parsing. In our case:
 
+{:style="text-align:center;"}
 ![Hash function](/assets/blog-post-apihashing/hash_function1.png)
 
+{:style="text-align:center;"}
 ![Hash function](/assets/blog-post-apihashing/hash_function2.png)
-
 
 
 ## Bypassing it
 
-Alright that's cool now we can detect it and reverse engineer it easily. But we have a problem...We still have no idea what functions the malware is importing...As I said, hashing is not reversible so we can't expect to just decrypt something symbols.
+Alright that's cool now we can detect it and reverse engineer it easily. But we have a problem...We still have no idea what functions the malware is importing...As I said, hashing is not reversible so we can't expect to just directly decrypt some symbols.
 There are two ways we can find what the malware is importing dynamically.
 
 ### Debugging
 We can put breakpoints where the malware is comparing the digests when it is looking at the PEB module list.
 
+{:style="text-align:center;"}
 ![Breakpoint Module Resolving](/assets/blog-post-apihashing/debugging1.png)
 
-Here I put a breakpoint where the function that resolve the in memory module returns a valid pointer (no `xor eax, eax`). We can see that the malware is trying to resolve `KERNEL32.DLL`, exactly as we saw from the source.
+Here I put a breakpoint where the function that resolve the in memory module via the PEB returns a valid pointer (no `xor eax, eax`). We can see that the malware is trying to resolve `KERNEL32.DLL`, exactly as we saw from the source.
 
 We can also set breakpoints where it is resolving procedure from the EAT the same way.
 
+{:style="text-align:center;"}
 ![Breakpoint Procedure Resolving](/assets/blog-post-apihashing/debugging2.png)
 
-Now insert a breakpoint before the digest of the symbol is computed, allowing us to see what symbol is being compared. It is not of big use because the breakpoint is going to be hit a thousand times.
+Insert a breakpoint before the digest of the symbol is computed, allowing us to see what symbol is being compared. It is not of big use because the breakpoint is going to be hit a thousand times.
 
 Most importantly set a second breakpoint where the function returns a valid pointer from the EAT (no `xor eax, eax`).
 
+{:style="text-align:center;"}
 ![What function was imported from x64dbg](/assets/blog-post-apihashing/debugging3.png)
 
 Conveniently, x64dbg automatically compares addresses and find which function was dynamically resolved. Here it tries to load `CreateFileW` from `kernel32.dll`, as we saw from the source.
 
-### Using bruteforce
+### Bruteforcing the hash 
+
+As explained before, a hash function is one way, so we would need to bruteforce the hash function with all possible WinAPI exports. I made a C++ tool that you can find [here](https://github.com/JeanBaptisteRamette/HashAPI), allowing us to automate this, you feed it some DLLs and it will dump their exported function names. It is pretty fast as I multithreaded it, so you can pass lots of DLLs to increase chances to find a hash. You can also conveniently pass it a python function so it automatically computes the hashes and builds a hashtable.
+
+{:style="text-align:center;"}
+![Usage](/assets/blog-post-apihashing/tool_use.png)
+
+{:style="text-align:center;"}
+![Test](/assets/blog-post-apihashing/tool_use2.png)
+
+{:style="text-align:center;"}
+![Result](/assets/blog-post-apihashing/tool_result.png)
+
+It now created a hashtable for us, we just need to search for the hash we have in IDA, in our case they were `18E6042C`, `191C0443`, and `11C8038C`. Looking at our hashtable they map to `CreateFileW`, `CloseHandle`, and `WriteFile`, as we saw from the original code. Perfect !
