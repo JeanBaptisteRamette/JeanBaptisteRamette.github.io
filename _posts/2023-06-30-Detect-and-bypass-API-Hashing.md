@@ -332,13 +332,13 @@ With two integers passed as argument, `0xDEADBEEF` being the hash of a module's 
 ```c++
 struct NT_PEB_LDR_DATA
 {
-	DWORD Length;
-	DWORD Initialized;
-	LPVOID SsHandle;
-
-	LIST_ENTRY InLoadOrderModuleList;
-	LIST_ENTRY InMemoryOrderModuleList;
-	LIST_ENTRY InInitializationOrderModuleList;
+    DWORD Length;
+    DWORD Initialized;
+    LPVOID SsHandle;
+    
+    LIST_ENTRY InLoadOrderModuleList;
+    LIST_ENTRY InMemoryOrderModuleList;
+    LIST_ENTRY InInitializationOrderModuleList;
 
     LPVOID EntryInProgress;
 };
@@ -350,7 +350,7 @@ struct NT_PEB_LDR_DATA
 
 IDA has no problem typing the local variables correctly, making it easy to detect.
 
-* PE Parsing, once the malware retrieved the base address of the module it needs, it needs to parse it to obtain the EAT.
+* PE Parsing, once the malware retrieved the base address of the module it wants, it needs to parse the module to obtain its EAT.
 
 ![PE Parsing](/assets/blog-post-apihashing/PEParsing.png)
 
@@ -366,3 +366,27 @@ If you want to label and type the PE structures, make sure to use the right vers
 
 
 ## Bypassing it
+
+Alright that's cool now we can detect it and reverse engineer it easily. But we have a problem...We still have no idea what functions the malware is importing...As I said, hashing is not reversible so we can't expect to just decrypt something symbols.
+There are two ways we can find what the malware is importing dynamically.
+
+### Debugging
+We can put breakpoints where the malware is comparing the digests when it is looking at the PEB module list.
+
+![Breakpoint Module Resolving](/assets/blog-post-apihashing/debugging1.png)
+
+Here I put a breakpoint where the function that resolve the in memory module returns a valid pointer (no `xor eax, eax`). We can see that the malware is trying to resolve `KERNEL32.DLL`, exactly as we saw from the source.
+
+We can also set breakpoints where it is resolving procedure from the EAT the same way.
+
+![Breakpoint Procedure Resolving](/assets/blog-post-apihashing/debugging2.png)
+
+Now insert a breakpoint before the digest of the symbol is computed, allowing us to see what symbol is being compared. It is not of big use because the breakpoint is going to be hit a thousand times.
+
+Most importantly set a second breakpoint where the function returns a valid pointer from the EAT (no `xor eax, eax`).
+
+![What function was imported from x64dbg](/assets/blog-post-apihashing/debugging3.png)
+
+Conveniently, x64dbg automatically compares addresses and find which function was dynamically resolved. Here it tries to load `CreateFileW` from `kernel32.dll`, as we saw from the source.
+
+### Using bruteforce
