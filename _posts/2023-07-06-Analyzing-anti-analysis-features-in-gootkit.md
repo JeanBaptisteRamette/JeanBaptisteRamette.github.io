@@ -22,6 +22,7 @@ There are tons of anti-analysis techniques, and malware authors sometimes come o
 
 In the main function of our gootkit sample, we have the following conditions:
 
+{:style="text-align:center;"}
 ![Exit conditions](/assets/blog-post-gootkit-anti-analysis/checks.png)
 
 if the branch is taken, the program will exit early, which makes us not able to analyze it properly. Let's analyze the 3 functions, and determine what gootkit is checking for.
@@ -302,6 +303,7 @@ Again, if the name of the executable under which the malware is running is one o
 
 Here is what we have so far:
 
+{:style="text-align:center;"}
 ![Exit conditions](/assets/blog-post-gootkit-anti-analysis/checks2.png)
 
 Now let's investigate one of the check that was not covered in the video, `sub_40B700`:
@@ -376,6 +378,7 @@ If the content matches, the malware will skip the other checks, so actually, thi
 
 ## Anti-analysis check n°3
 
+{:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/checks3.png)
 
 Digging into `sub_407FE0`, we eventually find the following code:
@@ -495,14 +498,17 @@ However, in the sample we have (the one provided by OALabs), there is no hashlis
 
 Digging a little bit more into the loader, I found out that this process enumeration function was not only used for anti-analysis purposes, but also for process injection ! So I will cover it briefly:
 
+{:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/main_function_thread_creation.png)
 
 Before the end of the main function, Gootkit creates a thread responsible for installing the JavaScript payload (Gootkit is divided into multiple stages, we are only looking at the loader).
 
+{:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/required_process_check.png)
 
 The installation setup only starts if `sub_407F70` returns false, meaning it is checking for some important predicate.
 
+{:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/process_check_navigator.png)
 
 From looking at this, We immediatly recognize the pattern we had seen before looking for running processes by hash. The difference is this time, Gootkit absolutely needs these processes to be running in order to proceed its attacks. If a malware needs a process to be running, it most of the time means that it is going to inject into it.
@@ -531,6 +537,7 @@ I wanted to show this even though it's not related to anti-analysis because it d
 
 Another thing that was not covered in OALabs video was this function:
 
+{:style="text-align:center;"}
 ![Post check function](/assets/blog-post-gootkit-anti-analysis/last_functions.png)
 
 This function is called if one of the two anti-analysis functions returns true, before exit. It decrypts a stack string containing the following batch script (MS-DOS command script):
