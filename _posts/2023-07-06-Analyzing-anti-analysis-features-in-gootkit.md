@@ -20,12 +20,12 @@ There are tons of anti-analysis techniques, and malware authors sometimes come o
 * Environment: malware may try to detect if it is being run in a virtual machine (for example with `cpuid` instruction), an emulated environment (such as Windows Defender's), or looking for virtualization artifacts like registry keys, filesystem, envvar...if one of those is detected, the malware may choose to stop its execution to avoid showing off its behavior.
 
 
-In the main function of our gootkit sample, we have the following conditions:
+In the main function of our Gootkit sample, we have the following conditions:
 
 {:style="text-align:center;"}
 ![Exit conditions](/assets/blog-post-gootkit-anti-analysis/checks.png)
 
-if the branch is taken, the program will exit early, which makes us not able to analyze it properly. Let's analyze the 3 functions, and determine what gootkit is checking for.
+if the branch is taken, the program will exit early, which makes us not able to analyze it properly. Let's analyze the 3 functions, and determine what Gootkit is checking for.
 
 
 ## Anti-analysis check n°1
@@ -74,7 +74,7 @@ int __stdcall sub_408440(LPCWSTR pszPath)
 ```
 
 The function will first retrieve the file name from the argument `lpString = PathFindFileNameW(pszPath);`, that is, the executable's name.
-The funcion `sub_40C990` is called, which just converts the string from a wide string to a regular C string, and calls sub_40C180` with the converted string:
+The funcion `sub_40C990` is called, which just converts the string from a wide string to a regular C style string, and calls `sub_40C180` with the converted string:
 
 ```c++
 unsigned int __cdecl sub_40C180(LPCSTR FullPath, int PathSize)
@@ -205,7 +205,7 @@ Back in our `sub_408440` function we understand the following:
 
 In addition, the function checks if the file name is longer than 32 characters, if it is, the malware probably considers that it has been downloaded from a malware uploading website and that the file name is probably the hash of the executable, thus being run for research purposes.
 
-To know the names of the forbidden filenames, we need to bruteforce the hashes. Here is a really naive and unoptimized but working implementation for bruteforcing CRC32 hashes I made:
+To know the names of the forbidden filenames, we need to bruteforce the hashes. Here is a really naive and unoptimized but working implementation for bruteforcing CRC-32 hashes I made:
 
 ```c++
 #include <unordered_set>
@@ -297,7 +297,7 @@ MALWARE.EXE = eed889c4
 TESTAPP.EXE = 2ab6e04a
 ```
 
-Again, if the name of the executable under which the malware is running is one of these, it will stop it's execution, these names indicate that the user running the program knows it is a malware, and it is ran for analysis purposes. Another interesting name is `"myapp.exe"` which is the name under which process are emulated inside Windows Defender's antivirus emulator (I recommend ![this amazing talk](https://youtu.be/wDNQ-8aWLO0) by Alexei Bulazel from which I got this information). So the malware will detect if it's being run under Windows Defender and evade automated analysis by shutting down.
+Again, if the name of the executable under which the malware is running is one of these, it will stop it's execution, these names indicate that the user running the program knows it is a malware, and it is ran for analysis purposes. Another interesting name is `"myapp.exe"` which is the name under which process are emulated inside Windows Defender's antivirus emulator (I recommend [this amazing talk](https://youtu.be/wDNQ-8aWLO0) by Alexei Bulazel from which I got this information). So the malware will detect if it's being run under Windows Defender and evade automated analysis by shutting down.
 
 ## Anti-analysis check n°2
 
@@ -355,9 +355,9 @@ int sub_40B700()
 
 We get a stack string usage, which is xored, `sub_402150`, `sub_402180`, and `sub_402130` are just string operations:
 
-* `sub_402150`: allocates a n bytes string
+* `sub_402150`: allocates a N bytes string
 * `sub_402180`: deallocates the string
-* `sub_402130`: copy byte to buffer
+* `sub_402130`: set byte/char at index i
 
 We can easily resolve the stack string: 
 
@@ -373,7 +373,7 @@ def decode_stack_string(chars, key):
 print(decode_stack_string([17, 42, 88, 25, 47, 31, 61, 86, 22, 43, 30, 55, 57], "rX9zD"))
 ```
 
-And we get the string `"crackmeololo"`, the malware checks if the CRC32 hash of the environment variable `"crackmeololo"` content matches 0x964B360E. Honestly, I haven't bothered bruteforcing the input this time, because it can be really anything..
+And we get the string `"crackmeololo"`, the malware checks if the CRC-32 hash of the environment variable `"crackmeololo"` content matches 0x964B360E. Honestly, I haven't bothered bruteforcing the input this time, because it can be really anything..
 If the content matches, the malware will skip the other checks, so actually, this function is not really an anti-analysis feature, it is just used to run the anti-analysis checks or not...I haven't found any reference to where the `"crackmeololo"` environment variable might be set, so it has probably no logical meaning, the author probably just left this as a troll.
 
 ## Anti-analysis check n°3
@@ -494,9 +494,9 @@ and calls it with the information class `SystemProcessInformation`, from MSDN:
 >Returns an array of SYSTEM_PROCESS_INFORMATION structures, one for each process running in the system. These structures contain information about the resource usage of each process, including the number of threads and handles used by the process, the peak page-file usage, and the number of memory pages that the process has allocated.
 
 The malware will iterate over each process (skipping itself and the Windows SYSTEM process), and compare (via hash) process names with a list of forbidden processes.
-However, in the sample we have (the one provided by OALabs), there is no hashlist to compare against, I thought it might be a decompilation failure, but looking at the disassembly it is not, even by debugging the loop is not executed, which is kind of weird...Anyway, we can quite safely assume that it is supposed to be an anti-VM check, on other versions of the loader, this function is quite probably looking for specific processes running in sandbox environment.
+However, in the sample we have (the one provided by OALabs), there is no hash-list to compare against, I thought it might be a decompilation failure, but looking at the disassembly it is not, even by debugging the loop is not executed, which is kind of weird...Anyway, we can quite safely assume that it is supposed to be an anti-VM check, on other versions of the loader, this function is quite probably looking for specific processes running in sandbox environment.
 
-Digging a little bit more into the loader, I found out that this process enumeration function was not only used for anti-analysis purposes, but also for process injection ! So I will cover it briefly:
+But I didn't stop here, digging a little bit more into the loader, I found out that this process enumeration function was not only used for anti-analysis purposes, but also for process injection ! So I will cover it briefly:
 
 {:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/main_function_thread_creation.png)
@@ -550,11 +550,11 @@ if exist %%1 goto %u
 del %%0
 ```
 
-(%u is a C format specifier)
+(`%u` is a C format specifier)
 
 The commands first removes readonly, system, and hidden attributes to the file passed as an argument, then loops until the file has been deleted, once it has been the batch script removes itself from the filesystem.
 
-The malware copies its executable path to a buffer and decrypts the string "%lu.bat", this time varying it's decoding, by merging the xor key and the encoded bytes together. It proceeds by replacing the filename from the buffer, to create the script file inside the same directory.
+The malware copies its executable path to a buffer and decrypts the string `"%lu.bat"`, this time varying it's decoding, by merging the xor key and the encoded bytes together. It proceeds by replacing the filename from the buffer, to create the script file inside the same directory.
 ```c
 lstrcpyW(script_path, executable_path);    // "C:\\path\\gootkit.exe"
 script_filename = last_index_of(script_path, '\\') + 1;
@@ -570,10 +570,56 @@ format = get_string(fmt_string);         // "C:\\path\\%lu.bat"
 wsprintfW(script_filename, format, time);       // give it a random name
 ```
 
-The script content is then written into a file in the same directory as the malware. TODO: Investigate why changing the filetime is used ?
+The script content is then written into a file in the same directory as the malware.
 
-The malware next resolves `ShellExecuteW` from `shell32.dll`, to launch the batch script with the malware executable path as argument. Resulting in deleting the malware executable, then the script itself.
+The malware next resolves `ShellExecuteW` from `shell32.dll`, to launch the batch script with the malware executable path as argument. Resulting in deleting the Gootkit loader, then the batch script itself.
 
 ## Additional anti-analysis checks
 
-TODO
+After analyzing the checks, I didn't want to stop here and call it a day, I looked a bit more into the loader and found the function `sub_408030`:
+
+{:style="text-align:center;"}
+![post detection](/assets/blog-post-gootkit-anti-analysis/additional_check_detected.png)
+
+This function tries to retrieve `UuidCreateSequential` on loop but passing a null pointer to `GetProcAddress`, which I guess is to act like a legit infinite loop bug. Xref'ing this function which we now call `fail`, we are led to each case where an analysis environment is detected:
+
+* Anti-Debug: The malware checks if the library `dbghelp.dll` (indicating a debugger is running) is loaded by trying to get a handle to it with `GetModuleHandleA`:
+
+{:style="text-align:center;"}
+![Checking for dbghelp.dll](/assets/blog-post-gootkit-anti-analysis/additional_check_dbghelp.png)
+
+* Anti-VM: The malware checks if the library `sbiedll.dll` (related to [sandboxie](https://en.wikipedia.org/wiki/Sandboxie)) is loaded by trying to get a handle to it with `GetModuleHandleA`:
+
+{:style="text-align:center;"}
+![Checking for sbiedll.dll](/assets/blog-post-gootkit-anti-analysis/additional_check_sbiedll.png)
+
+* Anti-VM: The malware checks if the username of the current thread is `CurrentUser` or `Sandbox`, or the hostname is `SANDBOX` or `7SILVIA`:
+
+{:style="text-align:center;"}
+![checking names](/assets/blog-post-gootkit-anti-analysis/additional_check_username.png)
+
+* Anti-VM: The malware checks for registry keys `HKLM\HARDWARE\DESCRIPTION\System\SystemBiosVersion`, `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion` for specific VM related value such as `QEMU`, `BOCHS`, or windows version used by sandboxing services such as `JoeSandbox`.
+
+{:style="text-align:center;"}
+![checking registry keys](/assets/blog-post-gootkit-anti-analysis/additional_check_regkey1.png)
+
+{:style="text-align:center;"}
+![checking registry keys](/assets/blog-post-gootkit-anti-analysis/additional_check_regkey2.png)
+
+
+There are multiple checks like those that I wont bother explaining because they are kind of repetitive. Another thing that I found interesting, at least to me because I had not seen this yet in my little experience: Remember the batch script used to delete the loader from the filesystem ? Well I did not go into the details of how Gootkit writes dropped files on the victim's system, but once the file is created, the malware is going to edit the file creation, last access, and last write date through the `SetFileTime` Windows API function. This is known as "timestomping", which refers to the alteration of file timestamps on the filesystem, this technique is used by threat actors to hide their tools on the victim's filesystem.
+
+When Gootkit drops a file on the host's filesystem, it first tries to copy `cmd.exe`'s timestamps to the script file:
+
+{:style="text-align:center;"}
+![](/assets/blog-post-gootkit-anti-analysis/copy_cmd_timestamps.png)
+
+If copying the timestamps failed, it will generate a random date for the previous year:
+
+{:style="text-align:center;"}
+![](/assets/blog-post-gootkit-anti-analysis/random_time.png)
+
+This will prevent from making the dropped file suspicious, and from looking related to the malware by forensics. For example, timestomping is also used by the loader when it updates itself.
+
+{:style="text-align:center;"}
+![](/assets/blog-post-gootkit-anti-analysis/timestomp_updated_loader.png)
