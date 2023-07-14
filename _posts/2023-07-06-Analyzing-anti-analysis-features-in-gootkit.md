@@ -494,7 +494,7 @@ and calls it with the information class `SystemProcessInformation`, from MSDN:
 >Returns an array of SYSTEM_PROCESS_INFORMATION structures, one for each process running in the system. These structures contain information about the resource usage of each process, including the number of threads and handles used by the process, the peak page-file usage, and the number of memory pages that the process has allocated.
 
 The malware will iterate over each process (skipping itself and the Windows SYSTEM process), and compare (via hash) process names with a list of forbidden processes.
-However, in the sample we have (the one provided by OALabs), there is no hash-list to compare against, I thought it might be a decompilation failure, but looking at the disassembly it is not, even by debugging the loop is not executed, which is kind of weird...Anyway, we can quite safely assume that it is supposed to be an anti-VM check, on other versions of the loader, this function is quite probably looking for specific processes running in sandbox environment.
+However, in the sample we have (the one provided by OALabs), there is no hash-list to compare against, I thought it might be a decompilation failure, but looking at the disassembly it is not, even by debugging the loop is not executed, which is kind of weird...Anyway, we can quite safely assume that it is supposed to be an anti-VM check, on other versions of the loader, this function is quite probably looking for specific reverse engineering tools running or specific processes running in some sandbox environment.
 
 But I didn't stop here, digging a little bit more into the loader, I found out that this process enumeration function was not only used for anti-analysis purposes, but also for process injection ! So I will cover it briefly:
 
@@ -540,7 +540,7 @@ Another thing that was not covered in OALabs video was this function:
 {:style="text-align:center;"}
 ![Post check function](/assets/blog-post-gootkit-anti-analysis/last_functions.png)
 
-This function is called if one of the two anti-analysis functions returns true, before exit. It decrypts a stack string containing the following batch script (MS-DOS command script):
+This function is called if one of the two anti-analysis functions returns true, meaning that an anti-analysis check verified, before exit. It decrypts a stack string containing the following batch script (MS-DOS command script):
 
 ```bat
 attrib -r -s -h %%1
@@ -623,3 +623,8 @@ This will prevent from making the dropped file suspicious, and from looking rela
 
 {:style="text-align:center;"}
 ![](/assets/blog-post-gootkit-anti-analysis/timestomp_updated_loader.png)
+
+
+## Conclusion
+
+We investigated how the Gootkit loader implements several anti-analysis checks to hide from analysts and now have some good PoC's on how a malware can detect an analysis environment (mainly via VM detection) easily. I hope this post was interesting, Bye !
